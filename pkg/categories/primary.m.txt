@@ -1,0 +1,109 @@
+#import <ApplicationServices/ApplicationServices.h>
+#import <Cocoa/Cocoa.h>
+id attr(AXUIElementRef x, NSString *k) {
+  CFTypeRef v = NULL;
+  AXUIElementCopyAttributeValue(x, (__bridge CFStringRef)k, &v);
+  return CFBridgingRelease(v);
+}
+void rowtree(AXUIElementRef e, int d, NSMutableDictionary *out) {
+  if (d > 8)
+    return;
+  NSString *i = attr(e, @"AXIdentifier");
+  NSDictionary *keys = @{
+    @"Mail.messageList.cell.view.addressLabel" : @"sender",
+    @"Mail.messageList.cell.view.dateLabel" : @"date",
+    @"Mail.messageList.cell.view.subjectLabel" : @"subject"
+  };
+  if (keys[i] && [attr(e, @"AXValue") isKindOfClass:NSString.class])
+    out[keys[i]] = attr(e, @"AXValue");
+  if ([i isEqual:@"Mail.messageView.unread"])
+    out[@"unread"] = @YES;
+  if ([i isEqual:@"Mail.messageList.cell.view.timeSensitive"])
+    out[@"timeSensitive"] = @YES;
+  for (id c in attr(e, @"AXChildren"))
+    rowtree((__bridge AXUIElementRef)c, d + 1, out);
+}
+static int rowLimit = 100;
+void walk(AXUIElementRef e, int d, NSMutableArray *out) {
+  if (d > 9)
+    return;
+  if ([attr(e, @"AXRole") isEqual:@"AXTable"]) {
+    CFArrayRef raw = NULL;
+    AXUIElementCopyAttributeValues(e, CFSTR("AXRows"), 0, rowLimit, &raw);
+    NSArray *rr = CFBridgingRelease(raw);
+    for (id r in rr) {
+      NSMutableDictionary *o = [@{
+        @"unread" : @NO,
+        @"timeSensitive" : @NO
+      } mutableCopy];
+      rowtree((__bridge AXUIElementRef)r, 0, o);
+      if (o[@"subject"] && o[@"sender"])
+        [out addObject:o];
+    }
+    return;
+  }
+  for (id c in attr(e, @"AXChildren"))
+    walk((__bridge AXUIElementRef)c, d + 1, out);
+}
+
+NSString *primaryHeader(AXUIElementRef window) {
+  BOOL inbox = NO;
+  NSString *summary = nil;
+  for (id child in attr(window, @"AXChildren")) {
+    AXUIElementRef element = (__bridge AXUIElementRef)child;
+    if (![attr(element, @"AXRole") isEqual:@"AXStaticText"])
+      continue;
+    NSString *value = attr(element, @"AXValue");
+    if ([value isEqual:@"Inbox"])
+      inbox = YES;
+    if ([value hasPrefix:@"Primary ·"])
+      summary = value;
+  }
+  return inbox ? summary : nil;
+}
+int main(int argc, char **argv) {
+  @autoreleasepool {
+    if (argc > 1)
+      rowLimit = atoi(argv[1]);
+    if (rowLimit < 1 || rowLimit > 1000)
+      return 2;
+    NSRunningApplication *app =
+        [NSRunningApplication
+            runningApplicationsWithBundleIdentifier:@"com.apple.mail"]
+            .firstObject;
+    if (!app || !AXIsProcessTrusted()) {
+      fprintf(stderr,
+              "Mail is unavailable or Accessibility permission is missing\n");
+      return 3;
+    }
+    AXUIElementRef root = AXUIElementCreateApplication(app.processIdentifier);
+    NSArray *windows = attr(root, @"AXWindows");
+    if (!windows.count) {
+      fprintf(stderr, "Mail has no accessible window; unlock/wake the Mac\n");
+      return 4;
+    }
+    AXUIElementRef window = (__bridge AXUIElementRef)windows.firstObject;
+    NSString *before = primaryHeader(window);
+    if (!before) {
+      fprintf(stderr, "The first Mail window must show Inbox, Primary\n");
+      return 5;
+    }
+    NSMutableArray *rows = [NSMutableArray array];
+    walk(window, 0, rows);
+    NSString *after = primaryHeader(window);
+    if (!after || ![before isEqual:after]) {
+      fprintf(stderr, "Mail view changed during collection; retry\n");
+      return 6;
+    }
+    NSData *json = [NSJSONSerialization dataWithJSONObject:@{
+      @"verified" : @YES,
+      @"rows" : rows,
+      @"limit" : @(rowLimit),
+      @"summary" : after
+    }
+                                                   options:0
+                                                     error:nil];
+    fwrite(json.bytes, 1, json.length, stdout);
+    CFRelease(root);
+  }
+}

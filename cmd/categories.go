@@ -42,5 +42,19 @@ func init() {
 			return json.NewEncoder(c.OutOrStdout()).Encode(r)
 		}})
 	}
+	primary := &cobra.Command{Use: "primary", Short: "Read a verified Primary feed without selecting or marking messages read", Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			limit, _ := c.Flags().GetInt("limit")
+			ctx, cancel := context.WithTimeout(c.Context(), 75*time.Second)
+			defer cancel()
+			feed, err := categories.Primary(ctx, limit)
+			if err != nil {
+				return err
+			}
+			_, err = c.OutOrStdout().Write(append(feed, '\n'))
+			return err
+		}}
+	primary.Flags().Int("limit", 100, "Maximum Primary rows to inspect (1–1000)")
+	group.AddCommand(primary)
 	rootCmd.AddCommand(group)
 }

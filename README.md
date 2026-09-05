@@ -564,8 +564,33 @@ process. Operations select messages and change the active view. They serialize
 against other category operations from this CLI, but cannot prevent interference
 by a human or another automation tool. English labels and this Mail layout are
 currently required. Only already-read inbox messages are accepted, avoiding
-accidental read-status changes. This is not yet a safe unread-notification feed.
+accidental read-status changes. Use the separate read-only feed below for unread
+notifications.
 
 For Linux, run the binary on your Mac through SSH. Normal commands retain their
 upstream behavior. This implementation uses neither AI at runtime nor private
 database writes.
+
+### Read-only Primary feed
+
+`mail-app-cli categories primary --limit 100` returns JSON for unambiguous
+individual messages from the first 100 rows of the actual Primary view. It
+reads native Accessibility rows without selecting or scrolling, then matches
+sender, subject, displayed date and unread state against a read-only Envelope
+Index connection. Ambiguous matches are omitted. IDs use mailbox URL + remote
+UID rather than local database row IDs. Time-sensitive messages shown in Primary
+are included regardless of their model category.
+
+Requires an awake, unlocked English macOS session, the first Mail window showing
+Inbox > Primary, and View > Organize by Conversation **off**. Both view and
+conversation mode are checked before and after the read. Other category commands
+may change the view, so return to Primary afterwards. This is a bounded recent
+feed, not a complete mailbox or unread count. UI layout/date changes can reduce
+coverage or fail the read; unknown membership is never assumed to be Primary.
+
+The embedded native helper compiles on first use with Apple's Command Line
+Tools. `/usr/bin/python3` matches the read-only database. Accessibility,
+Automation and Full Disk Access must be granted to the invoking process (for
+SSH, the relevant SSH service). No AI or browser automation runs during polling.
+
+Fixture validation: `python3 -m unittest discover -s pkg/categories -p 'test_primary.py'`.
