@@ -566,7 +566,10 @@ process. Operations select messages and change the active view. They serialize
 against other category operations from this CLI, but cannot prevent interference
 by a human or another automation tool. English labels and this Mail layout are
 currently required. Only already-read inbox messages are accepted, avoiding
-accidental read-status changes. Use the separate read-only feed below for unread
+direct read-status changes to the target. This does **not** guarantee that Mail
+won't automatically select and mark another message read when switching views:
+the live category test observed one such change, which was restored afterwards.
+Use the separate read-only feed below for unread
 notifications.
 
 For Linux, run the binary on your Mac through SSH. Normal commands retain their
