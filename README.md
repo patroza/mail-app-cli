@@ -534,3 +534,38 @@ For issues, questions, or contributions, please open an issue on GitHub.
 
 - Built with Cobra CLI framework
 - Uses AppleScript and JXA for Mail.app integration
+
+## Category support in this fork
+
+This fork retains the upstream Mail CLI and adds deterministic category UI
+automation tested with English-language Mail on macOS Sequoia 15.7.9:
+
+```sh
+mail-app-cli categories list
+mail-app-cli categories get MESSAGE_ID
+mail-app-cli categories sender MESSAGE_ID
+mail-app-cli categories set MESSAGE_ID Updates
+mail-app-cli categories set MESSAGE_ID Automatically
+```
+
+Outputs are JSON. `get` reads actual category view membership; `sender` reads
+the automatic/manual sender rule. These are distinct: a sender may be on
+Automatically while a message appears under Updates. Raw database model
+categories alone do not reliably match the Mail UI.
+
+`set` changes the **sender**, including existing and future messages, as Apple's
+Categorize Sender menu does. It reads the menu again before reporting success.
+An unexpected dialog or unverified result is an error. The write path has not
+yet been tested with a real category change; read paths have passed live tests.
+
+The Mac must have an unlocked graphical session, Mail's Inbox open with category
+buttons visible, and Accessibility plus Automation permissions for the invoking
+process. Operations select messages and change the active view. They serialize
+against other category operations from this CLI, but cannot prevent interference
+by a human or another automation tool. English labels and this Mail layout are
+currently required. Only already-read inbox messages are accepted, avoiding
+accidental read-status changes. This is not yet a safe unread-notification feed.
+
+For Linux, run the binary on your Mac through SSH. Normal commands retain their
+upstream behavior. This implementation uses neither AI at runtime nor private
+database writes.
