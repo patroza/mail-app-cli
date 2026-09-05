@@ -555,8 +555,10 @@ categories alone do not reliably match the Mail UI.
 
 `set` changes the **sender**, including existing and future messages, as Apple's
 Categorize Sender menu does. It reads the menu again before reporting success.
-An unexpected dialog or unverified result is an error. The write path has not
-yet been tested with a real category change; read paths have passed live tests.
+The expected delayed recategorization dialog is confirmed after checking its
+heading, destination and buttons. An unexpected dialog or unverified result is
+an error. A live Promotions → Updates sender change passed on macOS 15.7.9;
+the sender rule was independently read back and the database override changed.
 
 The Mac must have an unlocked graphical session, Mail's Inbox open with category
 buttons visible, and Accessibility plus Automation permissions for the invoking

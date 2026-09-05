@@ -91,9 +91,24 @@ on run argv
     tell application "System Events" to tell process "Mail"
      click menu item destination of menu 1 of menu item "Categorize Sender" of menu "Message" of menu bar item "Message" of menu bar 1
     end tell
-    delay 0.5
-    my closeMenus()
-    return "Category menu action invoked; inspect again to verify (check for confirmation dialogs)."
+    -- Mail presents a separate AXDialog asynchronously, not a window sheet.
+    -- Escape here would cancel the change before the verification pass.
+    repeat 40 times
+     tell application "System Events" to tell process "Mail"
+      if subrole of window 1 is "AXDialog" then
+       set dialogText to value of static texts of window 1
+       if (count dialogText) < 1 then error "Unknown Mail confirmation dialog"
+       set heading to item 1 of dialogText
+       if heading does not start with "Recategorize All Messages from " or heading does not end with (" to " & destination) then error "Unexpected Mail recategorization confirmation"
+       if not (exists button "Cancel" of window 1) or not (exists button "Continue" of window 1) then error "Unknown Mail confirmation buttons"
+       click button "Continue" of window 1
+       delay 1
+       return "Sender recategorization confirmed; inspect again to verify."
+      end if
+     end tell
+     delay 0.25
+    end repeat
+    return "No confirmation appeared; inspect again to verify the sender rule."
    end if
    set report to ""
    repeat with categoryName in my categoryNames()
