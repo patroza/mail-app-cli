@@ -1,0 +1,95 @@
+// Experimental persisted-category inspection. No AX, AppleScript, XPC writes,
+// message selection, or writable database connection.
+#import <Foundation/Foundation.h>
+#import <sqlite3.h>
+#import <dlfcn.h>
+#import <errno.h>
+@protocol MailResolvedCategory <NSObject>
+- (NSInteger)type;
+- (BOOL)isHighImpact;
+@end
+@interface NSObject (MailNativeCategoryRead)
+- (id)initWithSQLiteStatement:(sqlite3_stmt *)statement;
++ (id)categoryForResultRow:(id)row;
++ (NSPredicate *)predicateForPrimaryMessages;
+- (NSInteger)type;
+- (BOOL)isHighImpact;
+@end
+static id textColumn(sqlite3_stmt *s, int index) {
+  const unsigned char *v = sqlite3_column_text(s, index);
+  return v ? [NSString stringWithUTF8String:(const char *)v] : (id)[NSNull null];
+}
+int main(int argc, char **argv) { @autoreleasepool { @try {
+  if (argc != 2) return 2;
+  char *end = NULL; errno = 0;
+  long limit = strtol(argv[1], &end, 10);
+  if (errno || !end || *end || limit < 1 || limit > 1000) return 2;
+  if (!dlopen("/System/Library/PrivateFrameworks/EmailDaemon.framework/EmailDaemon", RTLD_NOW) ||
+      !dlopen("/System/Library/PrivateFrameworks/Email.framework/Email", RTLD_NOW)) return 3;
+  Class rowClass = NSClassFromString(@"EFSQLRow");
+  Class resolver = NSClassFromString(@"EDCategoryPersistence");
+  Class predicates = NSClassFromString(@"EMMessageListItemPredicates");
+  if (![rowClass instancesRespondToSelector:@selector(initWithSQLiteStatement:)] ||
+      ![resolver respondsToSelector:@selector(categoryForResultRow:)] ||
+      ![predicates respondsToSelector:@selector(predicateForPrimaryMessages)]) return 3;
+  NSPredicate *primary = [predicates predicateForPrimaryMessages];
+  if (!primary) return 3;
+  NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Mail/V10/MailData/Envelope Index"];
+  sqlite3 *db = NULL; sqlite3_stmt *stmt = NULL;
+  if (sqlite3_open_v2(path.fileSystemRepresentation, &db, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK) {
+    if (db) sqlite3_close(db); return 4;
+  }
+  sqlite3_busy_timeout(db, 3000);
+  if (sqlite3_db_readonly(db, "main") != 1) { sqlite3_close(db); return 4; }
+  // Apple's addCategoryColumns... mapper projects business_addresses.category
+  // as business_category. Keep raw metadata for comparison with UI/cache state.
+  const char *sql =
+    "SELECT m.rowid AS local_id,a.address,a.comment,s.subject,m.read,m.date_received,b.url,m.remote_id,"
+    "g.model_category,g.model_subcategory,g.model_high_impact,g.category_is_temporary,"
+    "ba.category AS business_category,bc.category AS business_table_category,g.category_model_version "
+    "FROM messages m JOIN addresses a ON a.rowid=m.sender JOIN subjects s ON s.rowid=m.subject "
+    "JOIN mailboxes b ON b.rowid=m.mailbox "
+    "LEFT JOIN message_global_data g ON g.rowid=m.global_message_id "
+    "LEFT JOIN business_addresses ba ON ba.address=m.sender "
+    "LEFT JOIN business_categories bc ON bc.business=ba.business "
+    "WHERE m.deleted=0 AND b.url LIKE '%/INBOX' ORDER BY m.date_received DESC,m.rowid DESC LIMIT ?";
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) { sqlite3_close(db); return 5; }
+  sqlite3_bind_int(stmt, 1, (int)limit);
+  NSMutableArray *messages = [NSMutableArray array];
+  NSArray *names = @[@"Primary", @"Transactions", @"Updates", @"Promotions"];
+  int rc;
+  while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) { @autoreleasepool {
+    id row = [[rowClass alloc] initWithSQLiteStatement:stmt];
+    id<MailResolvedCategory> category = [resolver categoryForResultRow:row];
+    if (!category || ![category respondsToSelector:@selector(type)] ||
+        ![category respondsToSelector:@selector(isHighImpact)]) { [row release]; rc = SQLITE_ERROR; break; }
+    NSInteger type = [category type];
+    if (type < 0 || type >= (NSInteger)names.count) { [row release]; rc = SQLITE_ERROR; break; }
+    BOOL isPrimary = [primary evaluateWithObject:@{@"category": category}];
+    NSMutableArray *memberships = [NSMutableArray arrayWithObject:names[type]];
+    if (isPrimary && type != 0) [memberships insertObject:@"Primary" atIndex:0];
+    [messages addObject:@{
+      @"localId": [NSString stringWithFormat:@"%lld",sqlite3_column_int64(stmt,0)],
+      @"sender":textColumn(stmt,1), @"senderName":textColumn(stmt,2), @"subject":textColumn(stmt,3),
+      @"unread":@((BOOL)(sqlite3_column_int(stmt,4)==0)), @"received":@(sqlite3_column_int64(stmt,5)),
+      @"mailboxUrl":textColumn(stmt,6), @"remoteId":textColumn(stmt,7),
+      @"category":names[type], @"categories":memberships, @"primary":@(isPrimary),
+      @"timeSensitive":@([category isHighImpact]),
+      @"modelCategory":textColumn(stmt,8), @"modelSubcategory":textColumn(stmt,9),
+      @"modelHighImpact":textColumn(stmt,10), @"temporary":textColumn(stmt,11),
+      @"senderOverride":textColumn(stmt,12), @"businessOverride":textColumn(stmt,13),
+      @"modelVersion":textColumn(stmt,14)}];
+    [row release];
+  }}
+  sqlite3_finalize(stmt); sqlite3_close(db);
+  if (rc != SQLITE_DONE) return 6;
+  NSDictionary *result = @{@"verified":@NO, @"experimental":@YES,
+    @"source":@"EDCategoryPersistence + EMMessageListItemPredicates; read-only SQLite",
+    @"primaryPredicate":primary.predicateFormat,
+    @"limitation":@"Persisted metadata only; UI/cache parity under investigation. Not a notifier feed.",
+    @"messages":messages};
+  NSData *json = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
+  if (!json) return 7;
+  fwrite(json.bytes, 1, json.length, stdout); putchar('\n'); return 0;
+} @catch (NSException *exception) { fprintf(stderr, "Unsupported Mail framework behavior\n"); return 8; }
+}}

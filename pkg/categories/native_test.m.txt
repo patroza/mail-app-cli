@@ -1,0 +1,35 @@
+// macOS integration test: real Apple resolver, synthetic SELECT-only rows.
+// clang -x objective-c -framework Foundation -lsqlite3 native_test.m.txt -o /tmp/mail-native-test
+#define main native_inspect_main
+#include "native.m.txt"
+#undef main
+int main(void) { @autoreleasepool {
+  dlopen("/System/Library/PrivateFrameworks/EmailDaemon.framework/EmailDaemon", RTLD_NOW);
+  dlopen("/System/Library/PrivateFrameworks/Email.framework/Email", RTLD_NOW);
+  Class resolver=NSClassFromString(@"EDCategoryPersistence"), rowClass=NSClassFromString(@"EFSQLRow");
+  if (!resolver || !rowClass) return 2;
+  NSArray *fixtures = @[
+    @[@"NULL,NULL,0,NULL",@0,@NO], // Unclassified fallback.
+    @[@"3,2,0,2",@2,@NO],        // Sender Updates overrides model Promotions.
+    @[@"0,1,0,3",@3,@NO],        // Sender Promotions overrides model Primary.
+    @[@"2,6,1,NULL",@2,@YES],    // Time-sensitive Updates also in Primary.
+    @[@"2,6,0,2",@2,@NO]        // Disputed UI fixture stays non-Primary here.
+  ];
+  sqlite3 *db=NULL; if (sqlite3_open(":memory:",&db)!=SQLITE_OK) return 3;
+  int passed=0;
+  for (NSArray *fixture in fixtures) { @autoreleasepool {
+    NSArray *v=[fixture[0] componentsSeparatedByString:@","];
+    NSString *sql=[NSString stringWithFormat:@"SELECT %@ AS model_category,%@ AS model_subcategory,%@ AS model_high_impact,%@ AS business_category,0 AS category_is_temporary",v[0],v[1],v[2],v[3]];
+    sqlite3_stmt *stmt=NULL;
+    if(sqlite3_prepare_v2(db,sql.UTF8String,-1,&stmt,NULL)!=SQLITE_OK || sqlite3_step(stmt)!=SQLITE_ROW) return 4;
+    id row=[[rowClass alloc] initWithSQLiteStatement:stmt];
+    id<MailResolvedCategory> category=[resolver categoryForResultRow:row];
+    BOOL primary=[[NSClassFromString(@"EMMessageListItemPredicates") predicateForPrimaryMessages] evaluateWithObject:@{@"category":category}];
+    BOOL expectedPrimary=([fixture[1] integerValue]==0 || [fixture[2] boolValue]);
+    BOOL ok=[category type]==[fixture[1] integerValue] && [category isHighImpact]==[fixture[2] boolValue] && primary==expectedPrimary;
+    [row release]; sqlite3_finalize(stmt);
+    if(!ok) { fprintf(stderr,"Fixture %d failed\n",passed+1); sqlite3_close(db); return 5; }
+    passed++;
+  }}
+  sqlite3_close(db); printf("%d native resolver fixtures passed\n",passed); return 0;
+}}

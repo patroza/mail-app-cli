@@ -599,3 +599,10 @@ Automation and Full Disk Access must be granted to the invoking process (for
 SSH, the relevant SSH service). No AI or browser automation runs during polling.
 
 Fixture validation: `python3 -m unittest discover -s pkg/categories -p 'test_primary.py'`.
+
+### Experimental native categories (Tahoe)
+
+`mail-app-cli categories native --limit 100` inspects persisted categories through
+Apple's own frameworks and a read-only database connection, without the Mail UI.
+It remains separate from the Primary notifier because UI parity is unresolved;
+output intentionally has `verified:false`. See [native reader findings and tests](research/NATIVE-CATEGORIES.md).

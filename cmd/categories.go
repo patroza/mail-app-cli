@@ -56,5 +56,19 @@ func init() {
 		}}
 	primary.Flags().Int("limit", 100, "Maximum Primary rows to inspect (1–1000)")
 	group.AddCommand(primary)
+	native := &cobra.Command{Use: "native", Short: "Experimental read-only native category inspection; no Mail window required", Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			limit, _ := c.Flags().GetInt("limit")
+			ctx, cancel := context.WithTimeout(c.Context(), 60*time.Second)
+			defer cancel()
+			result, err := categories.NativeInspect(ctx, limit)
+			if err != nil {
+				return err
+			}
+			_, err = c.OutOrStdout().Write(append(result, '\n'))
+			return err
+		}}
+	native.Flags().Int("limit", 100, "Recent inbox messages to inspect (1–1000)")
+	group.AddCommand(native)
 	rootCmd.AddCommand(group)
 }
