@@ -17,8 +17,65 @@ import (
 var nativeCategorySource string
 
 // NativeInspect reads persisted categories through Apple's own resolver. It is
-// deliberately separate from Primary: UI/cache parity is not yet established.
+// deliberately separate from Primary: it reports all categories and raw metadata.
 func NativeInspect(ctx context.Context, limit int) (json.RawMessage, error) {
+	return nativeRead(ctx, limit, false)
+}
+
+// NativePrimary evaluates Apple's Primary predicate on current persisted state.
+func NativePrimary(ctx context.Context, limit int) (json.RawMessage, error) {
+	raw, err := nativeRead(ctx, limit, true)
+	if err != nil {
+		return nil, err
+	}
+	return formatNativePrimary(raw)
+}
+
+func formatNativePrimary(raw []byte) (json.RawMessage, error) {
+	var result struct {
+		Verified bool                     `json:"verified"`
+		Scanned  int                      `json:"scanned"`
+		Messages []map[string]interface{} `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil || !result.Verified {
+		return nil, fmt.Errorf("native Primary result was not verified")
+	}
+	messages := make([]map[string]interface{}, 0, len(result.Messages))
+	seen := make(map[string]bool)
+	for _, m := range result.Messages {
+		mailbox, mok := m["mailboxUrl"].(string)
+		remote, rok := m["remoteId"].(string)
+		if !mok || !rok || mailbox == "" || remote == "" || m["primary"] != true {
+			return nil, fmt.Errorf("incomplete native Primary identity")
+		}
+		if _, ok := m["unread"].(bool); !ok {
+			return nil, fmt.Errorf("invalid native unread state")
+		}
+		if _, ok := m["timeSensitive"].(bool); !ok {
+			return nil, fmt.Errorf("invalid native time-sensitive state")
+		}
+		id := fmt.Sprintf("%x", sha256.Sum256([]byte(mailbox+"\x00"+remote)))
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		sender := m["senderName"]
+		if sender == nil || sender == "" {
+			sender = m["sender"]
+		}
+		messages = append(messages, map[string]interface{}{
+			"id":      id,
+			"localId": m["localId"], "mailboxUrl": mailbox, "remoteId": remote,
+			"rfcMessageId": m["rfcMessageId"], "category": "Primary", "sender": sender,
+			"subject": m["subject"], "received": m["received"], "unread": m["unread"], "timeSensitive": m["timeSensitive"],
+		})
+	}
+	return json.Marshal(map[string]interface{}{"verified": true, "backend": "native", "messages": messages,
+		"coverage": fmt.Sprintf("Recent Primary mail · %d messages · native Apple categories", len(messages)),
+		"scanned":  result.Scanned, "matched": len(messages), "ambiguous": 0, "unmatched": 0})
+}
+
+func nativeRead(ctx context.Context, limit int, primaryOnly bool) (json.RawMessage, error) {
 	if runtime.GOOS != "darwin" {
 		return nil, fmt.Errorf("native Mail categories require macOS")
 	}
@@ -56,7 +113,11 @@ func NativeInspect(ctx context.Context, limit int) (json.RawMessage, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	c := exec.CommandContext(ctx, binary, strconv.Itoa(limit))
+	args := []string{strconv.Itoa(limit)}
+	if primaryOnly {
+		args = append(args, "primary")
+	}
+	c := exec.CommandContext(ctx, binary, args...)
 	out, err := c.Output()
 	if err != nil {
 		if failure, ok := err.(*exec.ExitError); ok {

@@ -1,8 +1,10 @@
-# Native category reader (experimental)
+# Native category reader
 
 Validated on macOS Tahoe 26.6.2, build 25G83, Intel, September 6 2026.
 
-`mail-app-cli categories native --limit 100` reads recent physical Inbox rows
+`mail-app-cli categories primary --limit 100` is the default native Primary feed.
+`categories native --limit 100` additionally inspects all categories and raw
+metadata (that diagnostic output retains `verified:false`). Both read Inbox rows
 using SQLite READONLY, wraps the live statement in Apple's `EFSQLRow`, and calls
 `EDCategoryPersistence.categoryForResultRow:`. Membership uses Apple's own
 `EMMessageListItemPredicates.predicateForPrimaryMessages`, not a keyword heuristic.
@@ -29,28 +31,37 @@ The source has no Intel-specific code, but Apple Silicon/newer macOS are unteste
 - `research/native-category-mapper.m` reproduces that projection without opening
   any message database. Compile it with `clang -fobjc-arc -framework Foundation`.
 
-## Why this is not the notification backend yet
+## Validation against Mail and activation
 
-Output explicitly has `experimental:true` and `verified:false`. It is a metadata
-inspection result, not a drop-in Primary feed. Existing UI Primary remains the
-default, and the notifier rejects unverified results.
+The first paired sample had nine disagreements: UI rows showed Primary/time-sensitive,
+while Apple's persisted resolver did not. After normal Mail quit/reopen with no
+message selected, all nine disappeared from the checked Primary list. All tracked
+read states were preserved. This establishes stale UI state in that sample.
 
-In a paired sample, nine of 76 UI-matched Primary rows had native persisted
-categories outside Primary with high-impact false. All nine UI rows were marked
-time-sensitive by the AX reader. Stale UI state, AX interpretation, and other
-service behavior have not been distinguished. Do not claim exact UI parity.
-The current AX reader detects the time-sensitive identifier's presence, which
-also needs visibility validation. Physical `/INBOX` scope does not yet establish
-parity with every account's virtual/label mailbox representation.
+All 75 uniquely identified rows in the refreshed UI sample resolved native Primary,
+with matching time-sensitive flags. Reverse comparison explained the remaining
+raw UI rows: ambiguous duplicate candidates, a `RE: ` prefix omitted by the old
+matcher, and a `REMIND ME` date label. No unexplained category mismatch remained
+in this bounded comparison. The native feed includes subject prefixes, uses Mail's
+`display_date` ordering (received date fallback), and avoids text/date matching.
+Its 100-message cutoff can differ from 100 UI rows because the latter dropped
+ambiguous results. It emits stable mailbox-URL/remote-UID hashes, preserves boolean
+unread state, and deduplicates identities for the existing notifier contract.
+
+Default Primary reads now use the native backend. `--backend ax` remains an
+explicit diagnostic fallback; failure never silently switches back to UI.
+The metadata inspection command remains a separate all-category diagnostic.
 
 Attempted read-only `EMDaemonInterface`/`EMMessageRepository` queries were rejected
 by maild for a missing entitlement, through both direct and ordinary initialization.
-No entitlement bypass was attempted. Persisted-state resolution remains available.
+No entitlement bypass was attempted. The deployed resolver uses read-only persisted
+state and needs no maild entitlement.
 
-Next validation should obtain fresh native AX row identities/visibility and
-compare a refreshed, unselected Primary view against a coherent database snapshot.
-Only after unexplained differences are resolved should the native backend produce
-the existing stable mailbox-URL/remote-UID IDs and replace polling in production.
+Scope: physical Inbox rows; this has been validated with this iCloud account, not
+all providers' virtual/label mailboxes. It is not a complete unread count or proof
+of cloud freshness. Apple can change private selectors/schema, and newer OS builds
+must be revalidated. Writes still use the existing UI automation; this work replaces
+routine category **reads**, not sender-rule writes.
 
 ## Validation
 

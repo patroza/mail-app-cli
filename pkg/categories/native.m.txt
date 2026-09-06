@@ -20,7 +20,9 @@ static id textColumn(sqlite3_stmt *s, int index) {
   return v ? [NSString stringWithUTF8String:(const char *)v] : (id)[NSNull null];
 }
 int main(int argc, char **argv) { @autoreleasepool { @try {
-  if (argc != 2) return 2;
+  if (argc != 2 && argc != 3) return 2;
+  BOOL primaryOnly = argc == 3 && strcmp(argv[2], "primary") == 0;
+  if (argc == 3 && !primaryOnly) return 2;
   char *end = NULL; errno = 0;
   long limit = strtol(argv[1], &end, 10);
   if (errno || !end || *end || limit < 1 || limit > 1000) return 2;
@@ -44,21 +46,22 @@ int main(int argc, char **argv) { @autoreleasepool { @try {
   // Apple's addCategoryColumns... mapper projects business_addresses.category
   // as business_category. Keep raw metadata for comparison with UI/cache state.
   const char *sql =
-    "SELECT m.rowid AS local_id,a.address,a.comment,s.subject,m.read,m.date_received,b.url,m.remote_id,"
+    "SELECT m.rowid AS local_id,a.address,a.comment,COALESCE(m.subject_prefix,'') || s.subject AS subject,m.read,m.date_received,b.url,m.remote_id,"
     "g.model_category,g.model_subcategory,g.model_high_impact,g.category_is_temporary,"
-    "ba.category AS business_category,bc.category AS business_table_category,g.category_model_version "
+    "ba.category AS business_category,bc.category AS business_table_category,g.category_model_version,g.message_id "
     "FROM messages m JOIN addresses a ON a.rowid=m.sender JOIN subjects s ON s.rowid=m.subject "
     "JOIN mailboxes b ON b.rowid=m.mailbox "
     "LEFT JOIN message_global_data g ON g.rowid=m.global_message_id "
     "LEFT JOIN business_addresses ba ON ba.address=m.sender "
     "LEFT JOIN business_categories bc ON bc.business=ba.business "
-    "WHERE m.deleted=0 AND b.url LIKE '%/INBOX' ORDER BY m.date_received DESC,m.rowid DESC LIMIT ?";
+    "WHERE m.deleted=0 AND b.url LIKE '%/INBOX' ORDER BY COALESCE(NULLIF(m.display_date,0),m.date_received) DESC,m.rowid DESC LIMIT ?";
   if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) { sqlite3_close(db); return 5; }
-  sqlite3_bind_int(stmt, 1, (int)limit);
+  sqlite3_bind_int(stmt, 1, primaryOnly ? -1 : (int)limit);
   NSMutableArray *messages = [NSMutableArray array];
   NSArray *names = @[@"Primary", @"Transactions", @"Updates", @"Promotions"];
-  int rc;
+  int rc; NSUInteger scanned = 0;
   while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) { @autoreleasepool {
+    scanned++;
     id row = [[rowClass alloc] initWithSQLiteStatement:stmt];
     id<MailResolvedCategory> category = [resolver categoryForResultRow:row];
     if (!category || ![category respondsToSelector:@selector(type)] ||
@@ -66,6 +69,7 @@ int main(int argc, char **argv) { @autoreleasepool { @try {
     NSInteger type = [category type];
     if (type < 0 || type >= (NSInteger)names.count) { [row release]; rc = SQLITE_ERROR; break; }
     BOOL isPrimary = [primary evaluateWithObject:@{@"category": category}];
+    if (primaryOnly && (!isPrimary || sqlite3_column_type(stmt,7)==SQLITE_NULL || sqlite3_column_int64(stmt,7)<=0)) { [row release]; continue; }
     NSMutableArray *memberships = [NSMutableArray arrayWithObject:names[type]];
     if (isPrimary && type != 0) [memberships insertObject:@"Primary" atIndex:0];
     [messages addObject:@{
@@ -78,15 +82,16 @@ int main(int argc, char **argv) { @autoreleasepool { @try {
       @"modelCategory":textColumn(stmt,8), @"modelSubcategory":textColumn(stmt,9),
       @"modelHighImpact":textColumn(stmt,10), @"temporary":textColumn(stmt,11),
       @"senderOverride":textColumn(stmt,12), @"businessOverride":textColumn(stmt,13),
-      @"modelVersion":textColumn(stmt,14)}];
+      @"modelVersion":textColumn(stmt,14), @"rfcMessageId":textColumn(stmt,15)}];
     [row release];
+    if (primaryOnly && messages.count >= (NSUInteger)limit) { rc=SQLITE_DONE; break; }
   }}
   sqlite3_finalize(stmt); sqlite3_close(db);
   if (rc != SQLITE_DONE) return 6;
-  NSDictionary *result = @{@"verified":@NO, @"experimental":@YES,
+  NSDictionary *result = @{@"verified":@(primaryOnly), @"experimental":@(!primaryOnly), @"scanned":@(scanned),
     @"source":@"EDCategoryPersistence + EMMessageListItemPredicates; read-only SQLite",
     @"primaryPredicate":primary.predicateFormat,
-    @"limitation":@"Persisted metadata only; UI/cache parity under investigation. Not a notifier feed.",
+    @"limitation":@"Uses current persisted categories; Mail UI may retain stale categories until refreshed.",
     @"messages":messages};
   NSData *json = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
   if (!json) return 7;

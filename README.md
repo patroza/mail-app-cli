@@ -600,9 +600,13 @@ SSH, the relevant SSH service). No AI or browser automation runs during polling.
 
 Fixture validation: `python3 -m unittest discover -s pkg/categories -p 'test_primary.py'`.
 
-### Experimental native categories (Tahoe)
+### Native categories (Tahoe)
 
-`mail-app-cli categories native --limit 100` inspects persisted categories through
-Apple's own frameworks and a read-only database connection, without the Mail UI.
-It remains separate from the Primary notifier because UI parity is unresolved;
-output intentionally has `verified:false`. See [native reader findings and tests](research/NATIVE-CATEGORIES.md).
+`mail-app-cli categories primary --limit 100` now defaults to Apple's native
+category resolver and a read-only database connection. It requires no open Mail
+window or Accessibility. `--backend ax` explicitly selects the older UI reader
+described above. The existing notifier schema and stable message IDs are preserved.
+
+`mail-app-cli categories native --limit 100` is a separate all-category metadata
+inspection command; its diagnostic output intentionally has `verified:false`.
+See [native reader findings and tests](research/NATIVE-CATEGORIES.md).
