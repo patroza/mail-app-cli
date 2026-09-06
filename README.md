@@ -576,9 +576,9 @@ For Linux, run the binary on your Mac through SSH. Normal commands retain their
 upstream behavior. This implementation uses neither AI at runtime nor private
 database writes.
 
-### Read-only Primary feed
+### Legacy Accessibility Primary reader (`--backend ax`)
 
-`mail-app-cli categories primary --limit 100` returns JSON for unambiguous
+`mail-app-cli categories primary --backend ax --limit 100` returns JSON for unambiguous
 individual messages from the first 100 rows of the actual Primary view. It
 reads native Accessibility rows without selecting or scrolling, then matches
 sender, subject, displayed date and unread state against a read-only Envelope
