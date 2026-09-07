@@ -3,6 +3,7 @@ package desktop
 import (
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -84,5 +85,33 @@ func TestSearchCursorScope(t *testing.T) {
 	}
 	if Validate(Request{Op: "mail-list", Query: "x\x00y"}) == nil {
 		t.Fatal("NUL query allowed")
+	}
+}
+
+func TestThreadScopeAndValidation(t *testing.T) {
+	if Validate(Request{Op: "thread-list", ID: "invalid"}) == nil {
+		t.Fatal("invalid anchor accepted")
+	}
+	q := Request{Op: "thread-list", ID: strings.Repeat("a", 64), Account: "a", LocalID: 42}
+	if err := Validate(q); err != nil {
+		t.Fatal(err)
+	}
+	boxes := []browseMailbox{{AccountID: "a", URL: "imap://a/INBOX", Kind: "inbox"}, {AccountID: "a", URL: "imap://a/Sent", Kind: "sent"}, {AccountID: "b", URL: "imap://b/INBOX", Kind: "inbox"}, {AccountID: "a", URL: "imap://a/Trash", Kind: "trash"}, {AccountID: "a", URL: "imap://a/Drafts", Kind: "drafts"}, {AccountID: "a", URL: "imap://a/Junk", Kind: "junk"}}
+	options, scope, _, err := browseOptions(q, boxes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := options["threadMailboxes"].([]string)
+	if len(allowed) != 2 || allowed[1] != "imap://a/Sent" {
+		t.Fatalf("unsafe thread scope: %v", allowed)
+	}
+	raw, _ := json.Marshal(browseCursor{Offset: 2, Scope: scope})
+	q.Cursor = base64.RawURLEncoding.EncodeToString(raw)
+	if _, _, _, err := browseOptions(q, boxes); err != nil {
+		t.Fatal(err)
+	}
+	q.LocalID = 43
+	if _, _, _, err := browseOptions(q, boxes); err == nil {
+		t.Fatal("cursor crossed conversations")
 	}
 }

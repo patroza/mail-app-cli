@@ -150,6 +150,15 @@ func browseOptions(q Request, boxes []browseMailbox) (map[string]any, string, in
 		return nil, "", 0, errors.New("mailbox no longer exists; refresh mailboxes")
 	}
 	options := map[string]any{"mailbox": mailbox, "category": category, "includeTimeSensitive": include, "unreadOnly": q.UnreadOnly, "excludedMailboxes": excluded, "query": strings.TrimSpace(q.Query)}
+	if q.Op == "thread-list" {
+		allowed := []string{}
+		for _, b := range boxes {
+			if b.AccountID == q.Account && b.Kind != "junk" && b.Kind != "trash" && b.Kind != "drafts" {
+				allowed = append(allowed, b.URL)
+			}
+		}
+		options = map[string]any{"mailbox": "all", "category": "all", "threadLocalId": q.LocalID, "threadMailboxes": allowed}
+	}
 	scopeData, _ := json.Marshal(options)
 	scope := fmt.Sprintf("%x", sha256.Sum256(scopeData))
 	offset := 0
@@ -172,6 +181,11 @@ func browseOperation(ctx context.Context, q Request) (map[string]any, error) {
 	policy := "All Mail includes indexed server mailboxes, excluding recognized Junk, Trash and Drafts folders; unknown/custom folder roles are included. Empty and local-only mailboxes are not listed."
 	if q.Op == "mailboxes" {
 		return map[string]any{"ok": true, "mailboxes": boxes, "allMailPolicy": policy}, nil
+	}
+	if q.Op == "thread-list" {
+		if e := resolve(ctx, &q); e != nil {
+			return nil, e
+		}
 	}
 	options, scope, offset, e := browseOptions(q, boxes)
 	if e != nil {
@@ -206,6 +220,13 @@ func browseOperation(ctx context.Context, q Request) (map[string]any, error) {
 			return nil, errors.New("incomplete message identity")
 		}
 		m["id"] = fmt.Sprintf("%x", sha256.Sum256([]byte(mailbox+"\x00"+remote)))
+		u, err := url.Parse(mailbox)
+		if err != nil || u.Host == "" {
+			return nil, errors.New("invalid account identity")
+		}
+		m["accountId"] = u.Host
+		m["threadId"] = categories.ThreadIdentity(mailbox, m["conversationId"], m["id"].(string))
+		delete(m, "conversationId")
 		m["mailboxId"] = fmt.Sprintf("%x", sha256.Sum256([]byte(mailbox)))
 		m["underlyingCategory"] = m["category"]
 		m["senderAddress"] = m["sender"]

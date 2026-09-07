@@ -72,25 +72,28 @@ int main(int argc, char **argv) { @autoreleasepool { @try {
   NSString *query = @
     "SELECT m.rowid AS local_id,a.address,a.comment,COALESCE(m.subject_prefix,'') || s.subject AS subject,m.read,m.date_received,b.url,m.remote_id,"
     "g.model_category,g.model_subcategory,g.model_high_impact,g.category_is_temporary,"
-    "ba.category AS business_category,bc.category AS business_table_category,g.category_model_version,g.message_id "
+    "ba.category AS business_category,bc.category AS business_table_category,g.category_model_version,g.message_id,m.conversation_id "
     "FROM messages m JOIN addresses a ON a.rowid=m.sender JOIN subjects s ON s.rowid=m.subject "
     "JOIN mailboxes b ON b.rowid=m.mailbox "
     "LEFT JOIN message_global_data g ON g.rowid=m.global_message_id "
     "LEFT JOIN business_addresses ba ON ba.address=m.sender "
     "LEFT JOIN business_categories bc ON bc.business=ba.business "
-    "WHERE m.deleted=0 AND (%@) ORDER BY COALESCE(NULLIF(m.display_date,0),m.date_received) DESC,m.rowid DESC LIMIT ?";
+    "WHERE m.deleted=0 AND (%@) ORDER BY COALESCE(NULLIF(m.display_date,0),m.date_received) %@,m.rowid %@ LIMIT ?";
   NSString *scope = @"b.url LIKE '%/INBOX'";
   if (browse) {
     scope = [mailbox isEqualToString:@"inbox"] ? @"b.url LIKE '%/INBOX'" : ([mailbox isEqualToString:@"all"] ? @"1" : @"b.url = ?");
     scope = [scope stringByAppendingString:@" AND m.remote_id>0"];
+    if (options[@"threadLocalId"]) scope = [scope stringByAppendingString:@" AND ((m.conversation_id!=0 AND m.conversation_id=(SELECT conversation_id FROM messages WHERE rowid=?)) OR m.rowid=?)"];
     if ([options[@"unreadOnly"] boolValue]) scope = [scope stringByAppendingString:@" AND m.read=0"];
     if (search.length) scope = [scope stringByAppendingString:@" AND mail_contains(COALESCE(m.subject_prefix,'') || COALESCE(s.subject,'') || char(10) || COALESCE(a.address,'') || char(10) || COALESCE(a.comment,''), ?)"];
   }
-  query = [NSString stringWithFormat:query, scope];
+  NSString *order = options[@"threadLocalId"] ? @"ASC" : @"DESC";
+  query = [NSString stringWithFormat:query, scope, order, order];
   const char *sql = query.UTF8String;
   if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) { sqlite3_close(db); return 5; }
   int parameter = 1;
   if (browse && ![mailbox isEqualToString:@"inbox"] && ![mailbox isEqualToString:@"all"]) sqlite3_bind_text(stmt, parameter++, mailbox.UTF8String, -1, SQLITE_TRANSIENT);
+  if (options[@"threadLocalId"]) { sqlite3_bind_int64(stmt, parameter++, [options[@"threadLocalId"] longLongValue]); sqlite3_bind_int64(stmt, parameter++, [options[@"threadLocalId"] longLongValue]); }
   if (browse && search.length) sqlite3_bind_text(stmt, parameter++, search.UTF8String, -1, SQLITE_TRANSIENT);
   sqlite3_bind_int(stmt, parameter, (primaryOnly || browse) ? -1 : (int)limit);
   NSMutableArray *messages = [NSMutableArray array];
@@ -99,6 +102,7 @@ int main(int argc, char **argv) { @autoreleasepool { @try {
   while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) { @autoreleasepool {
     scanned++;
     if (browse && [mailbox isEqualToString:@"all"] && [options[@"excludedMailboxes"] containsObject:textColumn(stmt,6)]) continue;
+    if (options[@"threadMailboxes"] && ![options[@"threadMailboxes"] containsObject:textColumn(stmt,6)]) continue;
     id row = [[rowClass alloc] initWithSQLiteStatement:stmt];
     id<MailResolvedCategory> category = [resolver categoryForResultRow:row];
     if (!category || ![category respondsToSelector:@selector(type)] ||
@@ -124,7 +128,7 @@ int main(int argc, char **argv) { @autoreleasepool { @try {
       @"modelCategory":textColumn(stmt,8), @"modelSubcategory":textColumn(stmt,9),
       @"modelHighImpact":textColumn(stmt,10), @"temporary":textColumn(stmt,11),
       @"senderOverride":textColumn(stmt,12), @"businessOverride":textColumn(stmt,13),
-      @"modelVersion":textColumn(stmt,14), @"rfcMessageId":textColumn(stmt,15)}];
+      @"modelVersion":textColumn(stmt,14), @"rfcMessageId":textColumn(stmt,15), @"conversationId":textColumn(stmt,16)}];
     [row release];
     if ((primaryOnly || browse) && messages.count >= (NSUInteger)limit) { rc=SQLITE_DONE; break; }
   }}

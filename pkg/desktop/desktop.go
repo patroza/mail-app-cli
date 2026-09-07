@@ -93,6 +93,14 @@ func Validate(q Request) error {
 		return validateBrowse(q)
 	case "accounts", "contacts", "list", "draft-list", "draft-get", "draft-put", "draft-delete":
 		return nil
+	case "thread-list":
+		if err := validateBrowse(q); err != nil {
+			return err
+		}
+		if !hexIdentity(q.ID) {
+			return errors.New("invalid thread anchor")
+		}
+		return nil
 	case "read", "mark", "cached-images":
 	case "send", "preview":
 		if err := validateInline(q); err != nil {
@@ -181,7 +189,7 @@ func Execute(ctx context.Context, q Request) (map[string]any, error) {
 	if e := Validate(q); e != nil {
 		return nil, e
 	}
-	if q.Op == "mailboxes" || q.Op == "mail-list" {
+	if q.Op == "mailboxes" || q.Op == "mail-list" || q.Op == "thread-list" {
 		return browseOperation(ctx, q)
 	}
 	if strings.HasPrefix(q.Op, "draft-") {

@@ -43,3 +43,21 @@ func TestNativePrimaryFailsClosed(t *testing.T) {
 		}
 	}
 }
+
+func TestThreadIdentityAccountScopeAndSingletons(t *testing.T) {
+	a := ThreadIdentity("imap://a/INBOX", "123", "one")
+	if a != ThreadIdentity("imap://a/Sent", "123", "two") {
+		t.Fatal("same account conversation split by mailbox")
+	}
+	if a == ThreadIdentity("imap://b/INBOX", "123", "one") {
+		t.Fatal("accounts merged")
+	}
+	if a == ThreadIdentity("imap://a/INBOX", "124", "one") {
+		t.Fatal("conversations merged")
+	}
+	for _, v := range []any{nil, "", "0"} {
+		if ThreadIdentity("imap://a/INBOX", v, "one") != "one" {
+			t.Fatal("missing conversation merged")
+		}
+	}
+}

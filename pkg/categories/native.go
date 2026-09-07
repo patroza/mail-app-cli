@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,6 +68,7 @@ func formatNativePrimary(raw []byte) (json.RawMessage, error) {
 		messages = append(messages, map[string]interface{}{
 			"id":      id,
 			"localId": m["localId"], "mailboxUrl": mailbox, "remoteId": remote,
+			"threadId": ThreadIdentity(mailbox, m["conversationId"], id), "accountId": mailboxAccount(mailbox),
 			"rfcMessageId": m["rfcMessageId"], "category": "Primary", "sender": sender,
 			"subject": m["subject"], "received": m["received"], "unread": m["unread"], "timeSensitive": m["timeSensitive"],
 		})
@@ -153,4 +155,20 @@ func nativeRun(ctx context.Context, limit int, mode string, options map[string]a
 		return nil, fmt.Errorf("invalid native category result")
 	}
 	return json.RawMessage(out), nil
+}
+
+// ThreadIdentity is scoped to the account, never a subject-based heuristic.
+func ThreadIdentity(mailbox string, conversation any, singleton string) string {
+	value, ok := conversation.(string)
+	if !ok || value == "" || value == "0" {
+		return singleton
+	}
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(mailboxAccount(mailbox)+"\x00conversation\x00"+value)))
+}
+func mailboxAccount(mailbox string) string {
+	u, err := url.Parse(mailbox)
+	if err != nil {
+		return ""
+	}
+	return u.Host
 }

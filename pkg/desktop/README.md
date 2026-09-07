@@ -42,7 +42,7 @@ Primary without changing persisted Apple classifications.
 All Mail excludes recognized Junk, Trash and Drafts names; unknown folder roles
 are included. Empty and local-only folders are omitted. Pagination uses a
 request-bound offset; concurrent mailbox changes require refreshing. This is
-not a full-search or thread API. Legacy `list` remains unchanged and is the
+not a full-body search API. Legacy `list` remains unchanged and is the
 rollback route. Mailbox-based message IDs still change on external moves.
 
 Validated on Tahoe: 100-row category/all-mail requests below one second in the
@@ -57,3 +57,25 @@ SQL parameters bind search text; wildcard/SQL syntax has no special meaning.
 Message-body, recipient and attachment-content search are not included. Reads
 remain on demand. A live probe found a message outside the first100 loaded rows;
 search, no-match and subsequent-page samples completed around0.5seconds.
+
+
+### Conversations (optional client view)
+
+`mail-list` (and native `list` in this build) adds `threadId` and `accountId`.
+Thread IDs hash Apple's persisted `messages.conversation_id` together with the
+account, so unrelated accounts and repeated subject lines cannot merge. Missing
+conversation IDs become singleton messages. IDs are local to this Mac's Mail
+index and should not be persisted across rebuilding that index.
+
+`{"op":"thread-list","id":"<message-id>","limit":100,"cursor":""}` returns
+`messages` with the same shape as `mail-list`, oldest first, plus `nextCursor`.
+The anchor is resolved server-side; clients cannot select arbitrary account or
+conversation SQL identifiers. Limit is 1–200 (default 100). Pagination is scoped
+to the resolved anchor/account mailbox set. It includes indexed same-account
+Sent and other folders across the conversation, regardless of current category
+or unread filters, excluding recognized Junk, Trash, and Drafts. Unknown custom
+folder roles are included. Cached messages may exist in multiple folders.
+Opening/listing a conversation does not mark any member read. The client must
+mark individual actually viewed messages through the existing `mark` operation.
+Bodies and attachments continue to load on demand using each member's `id`.
+Mailbox changes during offset pagination require refreshing the conversation.
