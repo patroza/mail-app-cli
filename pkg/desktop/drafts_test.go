@@ -59,3 +59,26 @@ func TestDraftDirectorySyncFailureIsReported(t *testing.T) {
 		t.Fatal("missing directory acknowledged as durable")
 	}
 }
+
+func TestDraftDeleteMissingIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	q := Request{Op: "draft-put", DraftID: strings.Repeat("d", 32), Draft: json.RawMessage(`{"subject":"explicit discard"}`)}
+	saved, err := draftInDir(dir, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.Op = "draft-delete"
+	q.Revision = saved["revision"].(string)
+	if _, err = draftInDir(dir, q); err != nil {
+		t.Fatal(err)
+	}
+	// Retry a lost delete acknowledgement, or discard local recovery after the
+	// other host has already removed the corresponding Mac draft.
+	if _, err = draftInDir(dir, q); err != nil {
+		t.Fatalf("missing delete: %v", err)
+	}
+	q.Op = "draft-put"
+	if _, err = draftInDir(dir, q); err == nil {
+		t.Fatal("stale put must not resurrect a deleted draft")
+	}
+}

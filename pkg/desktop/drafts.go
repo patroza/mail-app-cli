@@ -97,7 +97,7 @@ func draftInDir(dir string, q Request) (map[string]any, error) {
 	if exists && q.Revision != previous.Revision {
 		return nil, errors.New("draft changed on another device; reopen it before editing further")
 	}
-	if !exists && q.Revision != "" {
+	if !exists && q.Revision != "" && q.Op != "draft-delete" {
 		return nil, errors.New("draft was removed on another device")
 	}
 	if q.Op == "draft-delete" {
