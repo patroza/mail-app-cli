@@ -15,6 +15,8 @@ import (
 )
 
 type Attachment struct {
+	Inline      bool   `json:"inline,omitempty"`
+	Offset      int    `json:"offset,omitempty"` // Unicode code points into the plain body, before insertion.
 	Unavailable bool   `json:"unavailable,omitempty"`
 	Name        string `json:"name"`
 	MIME        string `json:"mime"`

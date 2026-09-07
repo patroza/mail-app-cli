@@ -81,6 +81,9 @@ func Validate(q Request) error {
 		return nil
 	case "read", "mark":
 	case "send", "preview":
+		if err := validateInline(q); err != nil {
+			return err
+		}
 		if q.Mode != "new" && q.Mode != "reply" && q.Mode != "forward" {
 			return errors.New("invalid compose mode")
 		}
