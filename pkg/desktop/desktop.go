@@ -29,6 +29,7 @@ var script string
 const MaxRequest = 32 << 20
 
 type Request struct {
+	Query                string `json:"query,omitempty"`
 	Mailbox              string `json:"mailbox,omitempty"`
 	Category             string `json:"category,omitempty"`
 	IncludeTimeSensitive *bool  `json:"includeTimeSensitive,omitempty"`

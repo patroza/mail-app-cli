@@ -19,6 +19,16 @@ static id textColumn(sqlite3_stmt *s, int index) {
   const unsigned char *v = sqlite3_column_text(s, index);
   return v ? [NSString stringWithUTF8String:(const char *)v] : (id)[NSNull null];
 }
+static void mailContains(sqlite3_context *context, int count, sqlite3_value **values) {
+  @autoreleasepool {
+    const char *raw = (const char *)sqlite3_value_text(values[0]);
+    const char *needle = (const char *)sqlite3_value_text(values[1]);
+    NSString *haystack = raw ? [NSString stringWithUTF8String:raw] : @"";
+    NSString *query = needle ? [NSString stringWithUTF8String:needle] : @"";
+    BOOL found = query.length == 0 || [haystack rangeOfString:query options:NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch].location != NSNotFound;
+    sqlite3_result_int(context, found ? 1 : 0);
+  }
+}
 int main(int argc, char **argv) { @autoreleasepool { @try {
   if (argc != 2 && argc != 3) return 2;
   BOOL primaryOnly = argc == 3 && strcmp(argv[2], "primary") == 0;
@@ -32,6 +42,7 @@ int main(int argc, char **argv) { @autoreleasepool { @try {
     options = decoded;
   }
   NSString *mailbox = options[@"mailbox"] ?: @"inbox";
+  NSString *search = options[@"query"] ?: @"";
   NSString *filterCategory = options[@"category"] ?: @"all";
   BOOL includeTimeSensitive = options[@"includeTimeSensitive"] ? [options[@"includeTimeSensitive"] boolValue] : YES;
   NSUInteger skip = [options[@"offset"] unsignedIntegerValue], matched = 0;
@@ -55,6 +66,7 @@ int main(int argc, char **argv) { @autoreleasepool { @try {
   }
   sqlite3_busy_timeout(db, 3000);
   if (sqlite3_db_readonly(db, "main") != 1) { sqlite3_close(db); return 4; }
+  sqlite3_create_function_v2(db, "mail_contains", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, mailContains, NULL, NULL, NULL);
   // Apple's addCategoryColumns... mapper projects business_addresses.category
   // as business_category. Keep raw metadata for comparison with UI/cache state.
   NSString *query = @
@@ -72,12 +84,14 @@ int main(int argc, char **argv) { @autoreleasepool { @try {
     scope = [mailbox isEqualToString:@"inbox"] ? @"b.url LIKE '%/INBOX'" : ([mailbox isEqualToString:@"all"] ? @"1" : @"b.url = ?");
     scope = [scope stringByAppendingString:@" AND m.remote_id>0"];
     if ([options[@"unreadOnly"] boolValue]) scope = [scope stringByAppendingString:@" AND m.read=0"];
+    if (search.length) scope = [scope stringByAppendingString:@" AND mail_contains(COALESCE(m.subject_prefix,'') || COALESCE(s.subject,'') || char(10) || COALESCE(a.address,'') || char(10) || COALESCE(a.comment,''), ?)"];
   }
   query = [NSString stringWithFormat:query, scope];
   const char *sql = query.UTF8String;
   if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) { sqlite3_close(db); return 5; }
   int parameter = 1;
   if (browse && ![mailbox isEqualToString:@"inbox"] && ![mailbox isEqualToString:@"all"]) sqlite3_bind_text(stmt, parameter++, mailbox.UTF8String, -1, SQLITE_TRANSIENT);
+  if (browse && search.length) sqlite3_bind_text(stmt, parameter++, search.UTF8String, -1, SQLITE_TRANSIENT);
   sqlite3_bind_int(stmt, parameter, (primaryOnly || browse) ? -1 : (int)limit);
   NSMutableArray *messages = [NSMutableArray array];
   NSArray *names = @[@"Primary", @"Transactions", @"Updates", @"Promotions"];

@@ -18,6 +18,9 @@ import (
 
 // Browsing is a separate protocol: the legacy Primary-only list remains unchanged.
 func validateBrowse(q Request) error {
+	if len(q.Query) > 1024 || strings.ContainsRune(q.Query, 0) {
+		return errors.New("search query is too long or invalid")
+	}
 	if q.Limit < 0 || q.Limit > 200 {
 		return errors.New("limit must be 1–200")
 	}
@@ -146,7 +149,7 @@ func browseOptions(q Request, boxes []browseMailbox) (map[string]any, string, in
 	if !found {
 		return nil, "", 0, errors.New("mailbox no longer exists; refresh mailboxes")
 	}
-	options := map[string]any{"mailbox": mailbox, "category": category, "includeTimeSensitive": include, "unreadOnly": q.UnreadOnly, "excludedMailboxes": excluded}
+	options := map[string]any{"mailbox": mailbox, "category": category, "includeTimeSensitive": include, "unreadOnly": q.UnreadOnly, "excludedMailboxes": excluded, "query": strings.TrimSpace(q.Query)}
 	scopeData, _ := json.Marshal(options)
 	scope := fmt.Sprintf("%x", sha256.Sum256(scopeData))
 	offset := 0

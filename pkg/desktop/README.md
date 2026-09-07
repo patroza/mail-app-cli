@@ -49,3 +49,11 @@ Validated on Tahoe: 100-row category/all-mail requests below one second in the
 sample, 200 distinct rows across two pages, cached Sent read and an unsent
 Sent-folder reply preview. No test email was sent. Apple Silicon cross-build
 passes; runtime there is not yet tested.
+
+`mail-list` also accepts `query`: a literal, case/diacritic-insensitive substring
+across subject, sender name and sender address, evaluated before category
+pagination over persisted mail metadata. Query is part of the cursor scope.
+SQL parameters bind search text; wildcard/SQL syntax has no special meaning.
+Message-body, recipient and attachment-content search are not included. Reads
+remain on demand. A live probe found a message outside the first100 loaded rows;
+search, no-match and subsequent-page samples completed around0.5seconds.

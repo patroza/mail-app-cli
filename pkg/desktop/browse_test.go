@@ -69,3 +69,20 @@ func TestMailboxSafetyAndAllPolicy(t *testing.T) {
 		t.Fatalf("explicit Junk unavailable %v %v", o, e)
 	}
 }
+
+func TestSearchCursorScope(t *testing.T) {
+	q := Request{Mailbox: "inbox", Query: "invoice"}
+	_, scope, _, err := browseOptions(q, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(browseCursor{Offset: 100, Scope: scope})
+	q.Cursor = base64.RawURLEncoding.EncodeToString(raw)
+	q.Query = "receipt"
+	if _, _, _, err = browseOptions(q, nil); err == nil {
+		t.Fatal("search cursor reused for different query")
+	}
+	if Validate(Request{Op: "mail-list", Query: "x\x00y"}) == nil {
+		t.Fatal("NUL query allowed")
+	}
+}
