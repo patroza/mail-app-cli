@@ -79,7 +79,7 @@ func Validate(q Request) error {
 	switch q.Op {
 	case "accounts", "contacts", "list", "draft-list", "draft-get", "draft-put", "draft-delete":
 		return nil
-	case "read", "mark":
+	case "read", "mark", "cached-images":
 	case "send", "preview":
 		if err := validateInline(q); err != nil {
 			return err
@@ -186,13 +186,16 @@ func Execute(ctx context.Context, q Request) (map[string]any, error) {
 	if q.Op == "contacts" {
 		return contacts(ctx)
 	}
-	if q.Op == "read" || q.Op == "mark" || ((q.Op == "send" || q.Op == "preview") && q.Mode != "new") {
+	if q.Op == "read" || q.Op == "cached-images" || q.Op == "mark" || ((q.Op == "send" || q.Op == "preview") && q.Mode != "new") {
 		if e := resolve(ctx, &q); e != nil {
 			return nil, e
 		}
 	}
 	if q.Op == "send" || q.Op == "preview" {
 		return compose(ctx, q)
+	}
+	if q.Op == "cached-images" {
+		return cachedImages(ctx, q)
 	}
 	if q.Op == "read" {
 		if local := localMessage(ctx, q); local != nil {
