@@ -50,7 +50,21 @@ func messagePaths(ctx context.Context, tree fs.FS, name string) ([]string, error
 }
 func localMessage(ctx context.Context, q Request) map[string]any {
 	home, _ := os.UserHomeDir()
-	root := filepath.Join(home, "Library/Mail/V10", q.Account, "INBOX.mbox")
+	root := filepath.Join(home, "Library/Mail/V10", q.Account)
+	// Prefer the mailbox's conventional disk location. Fall back to the account
+	// tree for nested/encoded names; index row IDs are unique across all mailboxes.
+	mailboxPath := q.MailboxPath
+	if mailboxPath == "" {
+		mailboxPath = "INBOX"
+	}
+	candidate := root
+	for _, part := range strings.Split(mailboxPath, "/") {
+		candidate = filepath.Join(candidate, part+".mbox")
+	}
+	if st, err := os.Stat(candidate); err == nil && st.IsDir() {
+		root = candidate
+	}
+
 	name := strconv.FormatInt(q.LocalID, 10) + ".emlx"
 	paths, e := messagePaths(ctx, os.DirFS(root), name)
 	if e != nil || len(paths) != 1 {

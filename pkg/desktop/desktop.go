@@ -29,6 +29,14 @@ var script string
 const MaxRequest = 32 << 20
 
 type Request struct {
+	Mailbox              string `json:"mailbox,omitempty"`
+	Category             string `json:"category,omitempty"`
+	IncludeTimeSensitive *bool  `json:"includeTimeSensitive,omitempty"`
+	UnreadOnly           bool   `json:"unreadOnly,omitempty"`
+	Limit                int    `json:"limit,omitempty"`
+	Cursor               string `json:"cursor,omitempty"`
+	MailboxPath          string `json:"resolvedMailbox,omitempty"`
+
 	RemoteID    string          `json:"-"`
 	StoredRead  bool            `json:"-"`
 	Received    int64           `json:"-"`
@@ -70,6 +78,7 @@ func Decode(r io.Reader) (Request, error) {
 	}
 	q.Account = ""
 	q.LocalID = 0
+	q.MailboxPath = ""
 	for i := range q.Attachments {
 		q.Attachments[i].Path = ""
 	}
@@ -77,6 +86,10 @@ func Decode(r io.Reader) (Request, error) {
 }
 func Validate(q Request) error {
 	switch q.Op {
+	case "mailboxes":
+		return nil
+	case "mail-list":
+		return validateBrowse(q)
 	case "accounts", "contacts", "list", "draft-list", "draft-get", "draft-put", "draft-delete":
 		return nil
 	case "read", "mark", "cached-images":
@@ -120,7 +133,7 @@ func Validate(q Request) error {
 }
 func resolve(ctx context.Context, q *Request) error {
 	home, _ := os.UserHomeDir()
-	sql := `SELECT m.rowid AS localId,b.url AS mailboxUrl,CAST(m.remote_id AS TEXT) AS remoteId,m.read AS wasRead,m.date_received AS received FROM messages m JOIN mailboxes b ON b.rowid=m.mailbox WHERE m.deleted=0 AND m.remote_id>0 AND b.url LIKE '%/INBOX';`
+	sql := `SELECT m.rowid AS localId,b.url AS mailboxUrl,CAST(m.remote_id AS TEXT) AS remoteId,m.read AS wasRead,m.date_received AS received FROM messages m JOIN mailboxes b ON b.rowid=m.mailbox WHERE m.deleted=0 AND m.remote_id>0 ;`
 	cmd := exec.CommandContext(ctx, "/usr/bin/sqlite3", "-readonly", "-json", filepath.Join(home, "Library/Mail/V10/MailData/Envelope Index"))
 	cmd.Stdin = strings.NewReader(sql)
 	raw, err := cmd.Output()
@@ -147,6 +160,10 @@ func resolve(ctx context.Context, q *Request) error {
 			if q.LocalID != 0 {
 				return errors.New("message identity is ambiguous")
 			}
+			if !safeMailboxPath(u.Path) {
+				return errors.New("unsupported mailbox path")
+			}
+			q.MailboxPath = strings.TrimPrefix(u.Path, "/")
 			q.Account = u.Host
 			q.LocalID = r.LocalID
 			q.RemoteID = r.RemoteID
@@ -155,13 +172,16 @@ func resolve(ctx context.Context, q *Request) error {
 		}
 	}
 	if q.LocalID == 0 {
-		return errors.New("message is no longer in the inbox; refresh Primary")
+		return errors.New("message is no longer in this mailbox; refresh the message list")
 	}
 	return nil
 }
 func Execute(ctx context.Context, q Request) (map[string]any, error) {
 	if e := Validate(q); e != nil {
 		return nil, e
+	}
+	if q.Op == "mailboxes" || q.Op == "mail-list" {
+		return browseOperation(ctx, q)
 	}
 	if strings.HasPrefix(q.Op, "draft-") {
 		return draftOperation(q)

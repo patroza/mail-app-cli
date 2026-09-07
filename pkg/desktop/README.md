@@ -27,3 +27,25 @@ position checks. Native Tahoe checks covered empty bodies, positions at the
 start/middle/end, identical offsets, non-BMP characters and mixed ordinary/inline
 attachments. These checks do not establish how every recipient mail client will
 render the delivered MIME.
+
+### Opt-in expanded browsing
+
+`mailboxes` lists populated server-backed mailboxes (`id`, `name`, `accountId`,
+`kind`). `mail-list` accepts `mailbox` (`inbox`, `all`, or returned ID), `category`
+(`all`, `Primary`, `Transactions`, `Updates`, `Promotions`; categories only on
+Inbox), `includeTimeSensitive` (default true), `unreadOnly`, `limit` (default100,
+maximum200), and an opaque `cursor`. Results include `messages` and `nextCursor`.
+Messages expose `underlyingCategory`, `timeSensitive`, `primary`, `primaryReason`
+and mailbox identity. The client can exclude time-sensitive promotion into
+Primary without changing persisted Apple classifications.
+
+All Mail excludes recognized Junk, Trash and Drafts names; unknown folder roles
+are included. Empty and local-only folders are omitted. Pagination uses a
+request-bound offset; concurrent mailbox changes require refreshing. This is
+not a full-search or thread API. Legacy `list` remains unchanged and is the
+rollback route. Mailbox-based message IDs still change on external moves.
+
+Validated on Tahoe: 100-row category/all-mail requests below one second in the
+sample, 200 distinct rows across two pages, cached Sent read and an unsent
+Sent-folder reply preview. No test email was sent. Apple Silicon cross-build
+passes; runtime there is not yet tested.

@@ -19,7 +19,7 @@ function run() {
     }
     function target() {
         const acc = app.accounts.byId(q.resolvedAccount);
-        const msg = acc.mailboxes.byName('INBOX').messages.byId(q.localId);
+        const msg = acc.mailboxes.byName(q.resolvedMailbox || 'INBOX').messages.byId(q.localId);
         if (!msg.exists() || msg.deletedStatus()) throw Error('missing message');
         return msg;
     }

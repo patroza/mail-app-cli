@@ -1,6 +1,7 @@
 package categories
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	_ "embed"
@@ -76,6 +77,19 @@ func formatNativePrimary(raw []byte) (json.RawMessage, error) {
 }
 
 func nativeRead(ctx context.Context, limit int, primaryOnly bool) (json.RawMessage, error) {
+	mode := ""
+	if primaryOnly {
+		mode = "primary"
+	}
+	return nativeRun(ctx, limit, mode, nil)
+}
+
+// NativeBrowse uses the same Apple resolver with bounded, read-only mailbox browsing.
+func NativeBrowse(ctx context.Context, limit int, options map[string]any) (json.RawMessage, error) {
+	return nativeRun(ctx, limit, "browse", options)
+}
+
+func nativeRun(ctx context.Context, limit int, mode string, options map[string]any) (json.RawMessage, error) {
 	if runtime.GOOS != "darwin" {
 		return nil, fmt.Errorf("native Mail categories require macOS")
 	}
@@ -114,10 +128,17 @@ func nativeRead(ctx context.Context, limit int, primaryOnly bool) (json.RawMessa
 		return nil, err
 	}
 	args := []string{strconv.Itoa(limit)}
-	if primaryOnly {
-		args = append(args, "primary")
+	if mode != "" {
+		args = append(args, mode)
 	}
 	c := exec.CommandContext(ctx, binary, args...)
+	if options != nil {
+		data, e := json.Marshal(options)
+		if e != nil {
+			return nil, e
+		}
+		c.Stdin = bytes.NewReader(data)
+	}
 	out, err := c.Output()
 	if err != nil {
 		if failure, ok := err.(*exec.ExitError); ok {

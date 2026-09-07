@@ -92,7 +92,7 @@ func compose(ctx context.Context, q Request) (map[string]any, error) {
 	var b strings.Builder
 	b.WriteString("set stage to \"create\"\nset d to missing value\ntell application \"Mail\"\ntry\n")
 	if q.Mode == "reply" {
-		fmt.Fprintf(&b, "set targetAccount to first account whose id is %s\nset targetMailbox to mailbox \"INBOX\" of targetAccount\nset original to first message of targetMailbox whose id is %d\nset d to reply original without opening window\n", appleString(q.Account), q.LocalID)
+		fmt.Fprintf(&b, "set targetAccount to first account whose id is %s\nset targetMailbox to mailbox %s of targetAccount\nset original to first message of targetMailbox whose id is %d\nset d to reply original without opening window\n", appleString(q.Account), appleString(q.MailboxPath), q.LocalID)
 	} else {
 		b.WriteString("set d to make new outgoing message with properties {visible:false}\n")
 	}
