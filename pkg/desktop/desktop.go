@@ -193,14 +193,9 @@ func Execute(ctx context.Context, q Request) (map[string]any, error) {
 	}
 	if q.Op == "read" {
 		if local := localMessage(ctx, q); local != nil {
-			decoded, e := decodeRead(local)
-			if e == nil {
-				m, _ := decoded["message"].(map[string]any)
-				if m["body"] != "" || m["html"] != "" {
-					return decoded, nil
-				}
-			}
+			return local, nil
 		}
+		return nil, errors.New("Message is not cached on the Mac yet; let Mail finish downloading, then retry")
 	}
 	unlock, e := automationLock(ctx)
 	if e != nil {

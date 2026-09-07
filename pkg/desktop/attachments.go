@@ -15,11 +15,12 @@ import (
 )
 
 type Attachment struct {
-	Name string `json:"name"`
-	MIME string `json:"mime"`
-	CID  string `json:"cid,omitempty"`
-	Data string `json:"data"`
-	Path string `json:"path,omitempty"`
+	Unavailable bool   `json:"unavailable,omitempty"`
+	Name        string `json:"name"`
+	MIME        string `json:"mime"`
+	CID         string `json:"cid,omitempty"`
+	Data        string `json:"data"`
+	Path        string `json:"path,omitempty"`
 }
 
 func extractAttachments(header mail.Header, r io.Reader, depth int, out *[]Attachment) error {
@@ -85,6 +86,10 @@ func stageAttachments(items []Attachment) (string, error) {
 	}
 	total := 0
 	for i := range items {
+		if items[i].Unavailable {
+			os.RemoveAll(dir)
+			return "", errors.New("an attachment is not downloaded yet")
+		}
 		data, e := base64.StdEncoding.DecodeString(items[i].Data)
 		total += len(data)
 		if e != nil || total > 20<<20 {

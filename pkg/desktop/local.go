@@ -9,6 +9,7 @@ import (
 	"net/mail"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,28 +18,45 @@ import (
 
 // Read complete cached messages without sending an AppleEvent. Mail's source()
 // downloads missing parts synchronously and blocks unrelated Mail automation.
+func messagePaths(ctx context.Context, tree fs.FS, name string) ([]string, error) {
+	paths := []string{}
+	e := fs.WalkDir(tree, ".", func(dir string, d fs.DirEntry, e error) error {
+		if e != nil {
+			return e
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if d.Name() == "Attachments" {
+			return fs.SkipDir
+		}
+		if d.Name() == "Messages" {
+			// Do not enumerate the 100,000+ cached message files. There are only
+			// a small number of bucket directories; check exact filenames.
+			for _, candidate := range []string{name, strings.TrimSuffix(name, ".emlx") + ".partial.emlx"} {
+				file := path.Join(dir, candidate)
+				if st, e := fs.Stat(tree, file); e == nil && st.Mode().IsRegular() {
+					paths = append(paths, file)
+				}
+			}
+			if len(paths) > 1 {
+				return fs.SkipAll
+			}
+			return fs.SkipDir
+		}
+		return ctx.Err()
+	})
+	return paths, e
+}
 func localMessage(ctx context.Context, q Request) map[string]any {
 	home, _ := os.UserHomeDir()
 	root := filepath.Join(home, "Library/Mail/V10", q.Account, "INBOX.mbox")
 	name := strconv.FormatInt(q.LocalID, 10) + ".emlx"
-	paths := []string{}
-	walked := 0
-	e := filepath.WalkDir(root, func(path string, d fs.DirEntry, e error) error {
-		if e != nil {
-			return e
-		}
-		walked++
-		if walked > 100000 {
-			return fs.SkipAll
-		}
-		if !d.IsDir() && d.Name() == name && filepath.Base(filepath.Dir(path)) == "Messages" {
-			paths = append(paths, path)
-		}
-		return ctx.Err()
-	})
+	paths, e := messagePaths(ctx, os.DirFS(root), name)
 	if e != nil || len(paths) != 1 {
 		return nil
 	}
+	paths[0] = filepath.Join(root, paths[0])
 	f, e := os.Open(paths[0])
 	if e != nil {
 		return nil
@@ -71,11 +89,9 @@ func localMessage(ctx context.Context, q Request) map[string]any {
 	if e != nil {
 		return nil
 	}
-	// Partial-content markers can also occur in .emlx files. Never silently lose
-	// externally stored MIME parts; let Mail reconstruct those through source().
-	if strings.Contains(strings.ToLower(string(source)), "x-apple-content-length:") {
-		return nil
-	}
+	content := cachedContent{Attachments: []Attachment{}, Missing: []string{}}
+	attachmentRoot := filepath.Join(filepath.Dir(filepath.Dir(paths[0])), "Attachments", strconv.FormatInt(q.LocalID, 10))
+	cachedMIME(m.Header, m.Body, attachmentRoot, "", 0, &content)
 	decode := func(s string) string {
 		if v, e := new(mime.WordDecoder).DecodeHeader(s); e == nil {
 			return v
@@ -93,7 +109,7 @@ func localMessage(ctx context.Context, q Request) map[string]any {
 	result := map[string]any{"ok": true, "backend": "local-emlx", "message": map[string]any{
 		"id": q.ID, "accountId": q.Account, "subject": decode(m.Header.Get("Subject")), "sender": decode(m.Header.Get("From")),
 		"replyTo": decode(m.Header.Get("Reply-To")), "date": time.Unix(q.Received, 0).UTC().Format(time.RFC3339),
-		"to": addresses("To"), "cc": addresses("Cc"), "read": q.StoredRead, "body": "", "source": string(source),
+		"to": addresses("To"), "cc": addresses("Cc"), "read": q.StoredRead, "body": content.Plain, "html": content.HTML, "attachments": content.Attachments, "missing": content.Missing, "complete": len(content.Missing) == 0,
 	}}
 	return result
 }

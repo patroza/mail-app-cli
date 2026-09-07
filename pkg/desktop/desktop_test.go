@@ -1,14 +1,38 @@
 package desktop
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/mail"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
+
+type guardedMailFS struct{ fstest.MapFS }
+
+func (f guardedMailFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	if strings.HasSuffix(name, "/Messages") || strings.HasSuffix(name, "/Attachments") {
+		return nil, errors.New("enumerated payload directory")
+	}
+	return f.MapFS.ReadDir(name)
+}
+func TestMessageLookupDoesNotEnumerateCachedPayloads(t *testing.T) {
+	tree := guardedMailFS{fstest.MapFS{
+		"store/Data/0/Messages/111.emlx":        &fstest.MapFile{Data: []byte("other")},
+		"store/Data/Messages/222.partial.emlx":  &fstest.MapFile{Data: []byte("target")},
+		"store/Data/Attachments/222/1/file.pdf": &fstest.MapFile{Data: []byte("attachment")},
+	}}
+	paths, e := messagePaths(context.Background(), tree, "222.emlx")
+	if e != nil || len(paths) != 1 || paths[0] != "store/Data/Messages/222.partial.emlx" {
+		t.Fatalf("target lookup failed: %v %v", paths, e)
+	}
+}
 
 func TestDraftConflictsPreserveSavedVersion(t *testing.T) {
 	dir := t.TempDir()
@@ -77,6 +101,39 @@ func TestInlineAttachmentsDecoded(t *testing.T) {
 	}
 	if len(out) != 1 || out[0].CID != "test" || out[0].Data != "YWJj" {
 		t.Fatal("inline image lost")
+	}
+}
+
+func TestPartialMessageUsesDecodedExternalPayload(t *testing.T) {
+	root := t.TempDir()
+	os.Mkdir(filepath.Join(root, "2"), 0700)
+	os.WriteFile(filepath.Join(root, "2", "test.pdf"), []byte("%PDF-synthetic"), 0600)
+	raw := "Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\nHello immediately\r\n--x\r\nContent-Type: application/pdf; name=test.pdf\r\nContent-Transfer-Encoding: base64\r\nX-Apple-Content-Length: 100\r\n\r\n\r\n--x--\r\n"
+	m, e := mail.ReadMessage(strings.NewReader(raw))
+	if e != nil {
+		t.Fatal(e)
+	}
+	out := cachedContent{}
+	cachedMIME(m.Header, m.Body, root, "", 0, &out)
+	if out.Plain != "Hello immediately" || len(out.Missing) != 0 || len(out.Attachments) != 1 {
+		t.Fatal("cached partial reconstruction failed")
+	}
+	decoded, e := base64.StdEncoding.DecodeString(out.Attachments[0].Data)
+	if e != nil || string(decoded) != "%PDF-synthetic" {
+		t.Fatal("external payload was double-decoded or lost")
+	}
+}
+
+func TestPartialMessageReportsMissingAttachmentWithoutDroppingBody(t *testing.T) {
+	raw := "Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\nReadable\r\n--x\r\nContent-Type: application/pdf; name=missing.pdf\r\nX-Apple-Content-Length: 500\r\n\r\n\r\n--x--\r\n"
+	m, _ := mail.ReadMessage(strings.NewReader(raw))
+	out := cachedContent{}
+	cachedMIME(m.Header, m.Body, t.TempDir(), "", 0, &out)
+	if out.Plain != "Readable" || len(out.Missing) != 1 || len(out.Attachments) != 1 || !out.Attachments[0].Unavailable {
+		t.Fatal("missing payload was silently ignored")
+	}
+	if _, e := stageAttachments(out.Attachments); e == nil {
+		t.Fatal("allowed forwarding an unavailable attachment")
 	}
 }
 
