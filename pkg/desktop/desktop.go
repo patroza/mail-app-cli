@@ -150,7 +150,7 @@ func resolve(ctx context.Context, q *Request) error {
 		hint = cachedLocator(q.ID)
 	}
 	if hint > 0 {
-		sql += fmt.Sprintf(" AND m.mailbox=(SELECT mailbox FROM messages WHERE rowid=%d) AND m.remote_id=(SELECT remote_id FROM messages WHERE rowid=%d)", hint, hint)
+		sql += fmt.Sprintf(" AND m.mailbox IN (SELECT rowid FROM mailboxes WHERE url=(SELECT url FROM mailboxes WHERE rowid=(SELECT mailbox FROM messages WHERE rowid=%d))) AND m.remote_id=(SELECT remote_id FROM messages WHERE rowid=%d)", hint, hint)
 	}
 	cmd := exec.CommandContext(ctx, "/usr/bin/sqlite3", "-readonly", "-json", filepath.Join(home, "Library/Mail/V10/MailData/Envelope Index"))
 	cmd.Stdin = strings.NewReader(sql)

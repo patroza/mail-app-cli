@@ -38,7 +38,7 @@ func TestHintIsVerifiedAndStaleLocatorFallsBack(t *testing.T) {
 	if resolve(context.Background(), &q) == nil {
 		t.Fatal("trusted unverified client identity")
 	}
-	exec.Command("/usr/bin/sqlite3", db, `INSERT INTO messages VALUES(1,100,0,1,0);`).Run()
+	exec.Command("/usr/bin/sqlite3", db, `INSERT INTO mailboxes VALUES('imap://account/INBOX'); INSERT INTO messages VALUES(2,100,0,1,0);`).Run()
 	q = Request{ID: id, HintLocalID: 1}
 	if e := resolve(context.Background(), &q); e == nil || !strings.Contains(e.Error(), "ambiguous") {
 		t.Fatalf("lost ambiguity protection: %v", e)
