@@ -29,6 +29,8 @@ var script string
 const MaxRequest = 32 << 20
 
 type Request struct {
+	DeferAttachments     bool   `json:"deferAttachments,omitempty"`
+	HintLocalID          int64  `json:"hintLocalId,omitempty"`
 	Query                string `json:"query,omitempty"`
 	Mailbox              string `json:"mailbox,omitempty"`
 	Category             string `json:"category,omitempty"`
@@ -142,7 +144,14 @@ func Validate(q Request) error {
 }
 func resolve(ctx context.Context, q *Request) error {
 	home, _ := os.UserHomeDir()
-	sql := `SELECT m.rowid AS localId,b.url AS mailboxUrl,CAST(m.remote_id AS TEXT) AS remoteId,m.read AS wasRead,m.date_received AS received FROM messages m JOIN mailboxes b ON b.rowid=m.mailbox WHERE m.deleted=0 AND m.remote_id>0 ;`
+	sql := `SELECT m.rowid AS localId,b.url AS mailboxUrl,CAST(m.remote_id AS TEXT) AS remoteId,m.read AS wasRead,m.date_received AS received FROM messages m JOIN mailboxes b ON b.rowid=m.mailbox WHERE m.deleted=0 AND m.remote_id>0 `
+	hint := q.HintLocalID
+	if hint == 0 {
+		hint = cachedLocator(q.ID)
+	}
+	if hint > 0 {
+		sql += fmt.Sprintf(" AND m.mailbox=(SELECT mailbox FROM messages WHERE rowid=%d) AND m.remote_id=(SELECT remote_id FROM messages WHERE rowid=%d)", hint, hint)
+	}
 	cmd := exec.CommandContext(ctx, "/usr/bin/sqlite3", "-readonly", "-json", filepath.Join(home, "Library/Mail/V10/MailData/Envelope Index"))
 	cmd.Stdin = strings.NewReader(sql)
 	raw, err := cmd.Output()
@@ -180,9 +189,14 @@ func resolve(ctx context.Context, q *Request) error {
 			q.Received = r.Received
 		}
 	}
+	if q.LocalID == 0 && hint > 0 {
+		q.HintLocalID = -1
+		return resolve(ctx, q)
+	}
 	if q.LocalID == 0 {
 		return errors.New("message is no longer in this mailbox; refresh the message list")
 	}
+	writeReadCache(q.ID, "locator", q.LocalID)
 	return nil
 }
 func Execute(ctx context.Context, q Request) (map[string]any, error) {
@@ -228,6 +242,9 @@ func Execute(ctx context.Context, q Request) (map[string]any, error) {
 	}
 	if q.Op == "read" {
 		if local := localMessage(ctx, q); local != nil {
+			if q.DeferAttachments {
+				deferReadAttachments(local)
+			}
 			return local, nil
 		}
 		return nil, errors.New("Message is not cached on the Mac yet; let Mail finish downloading, then retry")

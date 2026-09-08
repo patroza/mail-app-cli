@@ -65,12 +65,16 @@ func localMessage(ctx context.Context, q Request) map[string]any {
 		root = candidate
 	}
 
+	if result := cachedLocalMessage(q, root); result != nil {
+		return result
+	}
 	name := strconv.FormatInt(q.LocalID, 10) + ".emlx"
 	paths, e := messagePaths(ctx, os.DirFS(root), name)
 	if e != nil || len(paths) != 1 {
 		return nil
 	}
 	paths[0] = filepath.Join(root, paths[0])
+	stamp := sourceStamp(paths[0], q.LocalID)
 	f, e := os.Open(paths[0])
 	if e != nil {
 		return nil
@@ -125,5 +129,8 @@ func localMessage(ctx context.Context, q Request) map[string]any {
 		"replyTo": decode(m.Header.Get("Reply-To")), "date": time.Unix(q.Received, 0).UTC().Format(time.RFC3339),
 		"to": addresses("To"), "cc": addresses("Cc"), "read": q.StoredRead, "body": content.Plain, "html": content.HTML, "attachments": content.Attachments, "missing": content.Missing, "complete": len(content.Missing) == 0,
 	}}
+	if len(content.Missing) == 0 && stamp != "" && stamp == sourceStamp(paths[0], q.LocalID) {
+		writeReadCache(q.ID, "body", sourceEntry{Path: paths[0], Stamp: stamp, Checked: time.Now(), Result: result})
+	}
 	return result
 }
